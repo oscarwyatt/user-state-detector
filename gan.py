@@ -1,16 +1,8 @@
-import os
-import pickle
 import time
-
-# import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
 from torchvision.utils import make_grid, save_image
-# from tqdm import tqdm
 
 
 class Generator(nn.Module):
@@ -79,17 +71,6 @@ class Discriminator(nn.Module):
             output_dims {int} -- Predicted probability (default: {1})
         """
         super(Discriminator, self).__init__()
-        # Original architecture
-        # self.fc0 = nn.Sequential(
-        #     nn.Linear(input_dims, 784),
-        #     nn.LeakyReLU(0.2),
-        #     nn.Dropout(0.3)
-        # )
-        # self.fc1 = nn.Sequential(
-        #     nn.Linear(784, 1),
-        #     nn.Sigmoid()
-        # )
-        # CW2 architecture
         self.fc0 = nn.Sequential(
             nn.Linear(input_dims, 1024),
             nn.LeakyReLU(0.2),
@@ -118,10 +99,6 @@ class Discriminator(nn.Module):
         Returns:
             Tensor -- predicted probabilities (<batch_size>)
         """
-        # Original architecture
-        # x = self.fc0(x)
-        # x = self.fc1(x)
-        # CW2 architecture
         x = self.fc0(x)
         x = self.fc1(x)
         x = self.fc2(x)
@@ -188,24 +165,7 @@ def show_train_hist(hist, show=False, save=False, path='Train_hist.png'):
 
 
 def create_noise(num, dim):
-    """Noise constructor
-
-    returns a tensor filled with random numbers from a standard normal distribution
-
-    Arguments:
-        num {int} -- Number of vectors
-        dim {int} -- Dimension of vectors
-
-    Returns:
-        [Tensor] -- the generated noise vector batch
-
-
-    """
-
     return torch.clone(torch.tensor(word).repeat(num, 1))
-    # original
-    # return torch.randn(num, dim)
-
 
 
 if __name__ == '__main__':
@@ -282,30 +242,9 @@ if __name__ == '__main__':
             0.026069, -0.3117, -0.067945, -0.51853, 0.15353, 0.25949, 0.33959, -0.062935, -0.13637, 0.43082, 0.017123,
             -0.20531, -0.12607, -0.69892, 0.17694, -0.4299, 0.40172, 0.41446, 0.074672, 0.05857, -0.0085846, -0.20707,
             0.071902, 0.15358]
-    # data_dir = './MNIST_data/'
-    # save_dir = './MNIST_GAN_results/'
-    # image_save_dir = './MNIST_GAN_results/results'
-
-    # create folder if not exist
-    # if not os.path.exists(save_dir):
-    #     os.mkdir(save_dir)
-    # if not os.path.exists(image_save_dir):
-    #     os.mkdir(image_save_dir)
 
     # training parameters
     batch_size = 100
-    # batch_size = 256
-    # With a batch size of 100
-    # Generator loss: 2.39538733, Discriminator loss: 0.68898254
-    # Avg per epoch ptime: 5.55, total 100 epochs ptime: 554.58
-
-    # With a batch size of 256
-    # Generator loss: 3.25429068, Discriminator loss: 0.47576771
-    # Avg per epoch ptime: 4.91, total 100 epoch ptime: 490.54
-    #
-    # Thus, the larger batch size is faster, saving about a minute of training time
-    # It has worse performance on the generator, but performs better on the discriminator
-
     learning_rate = 0.0002
     # Changing this to 0.01 results in much worse generator losses, ~12 after a few epochs
     # While the lower LR has a loss of ~2 after just a couple of epochs
@@ -321,10 +260,6 @@ if __name__ == '__main__':
     # This suggests that the model had converged by 100 epochs and further
     # training is unnecessary
 
-    # CW2 architecture, 100 epochs, LR 0.0002, batch size 100
-    # Generator loss: 0.92059925, Discriminator loss: 1.26104516
-    # CW2 architecture, no dropout, 100 epochs, LR 0.0002, batch size 100
-
     # parameters for Models
     # image_size = 28
     corpus_size = 50
@@ -333,13 +268,6 @@ if __name__ == '__main__':
     G_output_dim = corpus_size
     D_input_dim = bert_vector_size
     D_output_dim = bert_vector_size
-
-    # construct the dataset and data loader
-    # transform = transforms.Compose([transforms.ToTensor(),
-    #                                 transforms.Normalize(mean=(0.5,), std=(0.5,))])
-    # train_data = datasets.MNIST(root=data_dir, train=True, transform=transform, download=True)
-    # train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True)
-
     # declare the generator and discriminator networks
     G_net = Generator(G_input_dim, G_output_dim).to(device)
     D_net = Discriminator(D_input_dim, D_output_dim).to(device)
@@ -348,8 +276,6 @@ if __name__ == '__main__':
     # criterion = nn.BCELoss().to(device)
     criterion_d = nn.MSELoss().to(device)
     criterion_g = nn.MSELoss().to(device)
-
-
     # Initialise the Optimizer
     G_optimizer = torch.optim.Adam(G_net.parameters(), lr=learning_rate)
     D_optimizer = torch.optim.Adam(D_net.parameters(), lr=learning_rate)
@@ -374,8 +300,6 @@ if __name__ == '__main__':
         G_net.train()
         D_net.train()
         epoch_start_time = time.time()
-
-
         # predict best words to represent pages
         word_predictions = G_net(page_content_embeddings)
         num_indicies = 1
@@ -383,7 +307,6 @@ if __name__ == '__main__':
         # total fudge to get it working - should be BERT embeddings from words chosen by G
         word_embeddings_from_g = create_noise(batch_size, G_input_dim).to(device)
         predicted_content = D_net(word_embeddings_from_g.to(device)).to(device)
-        # word_embeddings_from_g = "blah"
         # This should be the index of the word chosen
         # predicted_content = torch.tensor(0).to(device).repeat(batch_size, 1).to(device)
         loss_d = criterion_d(predicted_content, create_noise(batch_size, G_input_dim).to(device))
@@ -421,6 +344,3 @@ if __name__ == '__main__':
         print('Avg per epoch ptime: %.2f, total %d epochs ptime: %.2f' % (
             np.mean(train_hist['per_epoch_ptimes']), epochs, total_ptime))
         print("Training finish!... save training results")
-        # with open(save_dir + '/train_hist.pkl', 'wb') as f:
-        #     pickle.dump(train_hist, f)
-        # show_train_hist(train_hist, save=True, path=save_dir + '/MNIST_GAN_train_hist.png')
