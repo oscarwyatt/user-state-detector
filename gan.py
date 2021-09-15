@@ -5,22 +5,10 @@ import torch.nn as nn
 from torchvision.utils import make_grid, save_image
 from toy_data import universal_credit, passport, tax
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from random import random
 
 class Generator(nn.Module):
-    """Image generator
-
-    Takes a noise vector as input and syntheses a single channel image accordingly
-    """
-
     def __init__(self, input_dims, output_dims):
-        """Init function
-
-        Declare the network structure as indicated in CW2 Guidance
-
-        Arguments:
-            input_dims {int} -- Dimension of input noise vector
-            output_dims {int} -- Dimension of the output vector (flatten image)
-        """
         super(Generator, self).__init__()
         self.fc0 = nn.Sequential(nn.Linear(input_dims, 1536), nn.LeakyReLU(0.2), nn.Dropout(0.3))
         self.fc1 = nn.Sequential(nn.Linear(1536, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
@@ -31,15 +19,6 @@ class Generator(nn.Module):
         self.fc6 = nn.Sequential(nn.Linear(1536, output_dims), nn.Tanh())
 
     def forward(self, x):
-        """Forward function
-
-        Arguments:
-            x {Tensor} -- a batch of noise vectors in shape (<batch_size>x<input_dims>)
-
-        Returns:
-            Tensor -- a batch of flatten image in shape (<batch_size
-            To make it easier to understand, here is a small example:>x<output_dims>)
-        """
         x = self.fc0(x)
         x = self.fc1(x)
         x = self.fc2(x)
@@ -51,55 +30,22 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    """Image discriminator
-
-    Takes a image as input and predict if it is real from the dataset or fake synthesised by the generator
-    """
-
-    def __init__(self, input_dims, output_dims=1):
-        """Init function
-
-        Declare the discriminator network structure as indicated in CW2 Guidance
-
-        Arguments:
-            input_dims {int} -- Dimension of the flatten input images
-
-        Keyword Arguments:
-            output_dims {int} -- Predicted probability (default: {1})
-        """
+    def __init__(self, input_dims, output_dims):
         super(Discriminator, self).__init__()
-        self.fc0 = nn.Sequential(
-            nn.Linear(input_dims, 1536),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(0.3)
-        )
-        self.fc1 = nn.Sequential(
-            nn.Linear(1536, 3072),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(0.3)
-        )
-        self.fc2 = nn.Sequential(
-            nn.Linear(3072, 1536),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(0.3)
-        )
-        self.fc3 = nn.Sequential(
-            nn.Linear(1536, output_dims),
-        )
+        self.fc0 = nn.Sequential(nn.Linear(input_dims, 1536), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc1 = nn.Sequential(nn.Linear(1536, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc2 = nn.Sequential(nn.Linear(3072, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc3 = nn.Sequential(nn.Linear(3072, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc4 = nn.Sequential(nn.Linear(3072, 1536),  nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc5 = nn.Sequential(nn.Linear(1536, output_dims))
 
     def forward(self, x):
-        """Forward function
-
-        Arguments:
-            x {Tensor} -- a batch of 2D image in shape (<batch_size>xHxW)
-
-        Returns:
-            Tensor -- predicted probabilities (<batch_size>)
-        """
         x = self.fc0(x)
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
+        x = self.fc4(x)
+        x = self.fc5(x)
         return x
 
 
@@ -163,6 +109,7 @@ def corpus_embeddings():
     return torch.row_stack((torch.tensor(tax(), requires_grad=True), torch.tensor(passport(), requires_grad=True))).to(device)
 
 def create_noise(num, dim):
+
     tax_noise = torch.clone(torch.tensor(tax()).repeat(int(num / 2), 1))
     passport_noise = torch.clone(torch.tensor(passport()).repeat(int(num / 2), 1))
     concatenated = torch.cat((tax_noise, passport_noise))
@@ -171,18 +118,33 @@ def create_noise(num, dim):
 
 def generator_word_embeddings(indices):
     return corpus_embeddings()[indices]
-    # corpus_values = torch.row_stack((torch.tensor(tax()), torch.tensor(passport())))
-    # return corpus_values[indices]
 
 
 def nearest_content(bert_reconstructions, batch_size):
     dist = torch.cdist(bert_reconstructions, corpus_embeddings())
     closest_indices = torch.topk(dist, 1, largest=False).indices[:, 0][:,0]
+    return closest_indices
     embeddings = corpus_embeddings()
     reshaped_embeddings = torch.reshape(embeddings, (1, embeddings.shape[0], embeddings.shape[1]))
     resized_reshaped_embeddings = reshaped_embeddings.repeat(batch_size, 1, 1)
     content = resized_reshaped_embeddings[:, closest_indices, :][0, :, :]
     return content
+
+def get_predictions(g_net, corpus_size, batch_size):
+    word_predictions = g_net(page_content_embeddings)
+    num_indicies = 1
+    word_predictions_top_k_indicies = torch.topk(word_predictions, num_indicies)[1]
+    return generator_word_embeddings(word_predictions_top_k_indicies), word_predictions_top_k_indicies
+    # The below was an experiment - didn't seem to work but I'm keeping it around just in case
+    # if random() > 0.5:
+    #     word_predictions = g_net(page_content_embeddings)
+    #     num_indicies = 1
+    #     word_predictions_top_k_indicies = torch.topk(word_predictions, num_indicies)[1]
+    #     return generator_word_embeddings(word_predictions_top_k_indicies)
+    # else:
+    #     randomly_chosen_indices = torch.randint(0, corpus_size, (batch_size,)).reshape(batch_size, 1)
+    #     return generator_word_embeddings(randomly_chosen_indices)
+
 
 if __name__ == '__main__':
     # initialise the device for training, if gpu is available, device = 'cuda', else: device = 'cpu'
@@ -195,7 +157,6 @@ if __name__ == '__main__':
     epochs = 1000
 
     # parameters for Models
-    # image_size = 28
     corpus_size = 2
     bert_vector_size = 768
     G_input_dim = bert_vector_size
@@ -209,7 +170,7 @@ if __name__ == '__main__':
     # Binary Cross Entropy Loss function (original)
     # criterion = nn.BCELoss().to(device)
     criterion_d = nn.MSELoss().to(device)
-    criterion_g = nn.MSELoss().to(device)
+    criterion_g = nn.MSELoss().to(device)#nn.MSELoss().to(device)
     # Initialise the Optimizer
     G_optimizer = torch.optim.Adam(G_net.parameters(), lr=g_learning_rate)
     D_optimizer = torch.optim.Adam(D_net.parameters(), lr=d_learning_rate)
@@ -239,17 +200,20 @@ if __name__ == '__main__':
         D_net.train()
         epoch_start_time = time.time()
         # predict best words to represent pages
-        word_predictions = G_net(page_content_embeddings)
-        num_indicies = 1
-        word_predictions_top_k_indicies = torch.topk(word_predictions, num_indicies)[1]
-        word_embeddings_from_g = generator_word_embeddings(word_predictions_top_k_indicies)
-        predicted_content = D_net(word_embeddings_from_g.to(device)).to(device)
-        loss_d = criterion_d(predicted_content, page_content_embeddings)
-        D_optimizer.zero_grad()
-        loss_d.backward()
-        D_optimizer.step()
+        word_embeddings_from_g, predicted_word_indices = get_predictions(G_net, corpus_size, batch_size)
+        for i in range(10):
+            predicted_content = D_net(word_embeddings_from_g.to(device)).to(device)
+            loss_d = criterion_d(predicted_content, page_content_embeddings)
+            D_optimizer.zero_grad()
+            loss_d.backward(retain_graph=True)
+            D_optimizer.step()
         predicted_content_index_reconstruction = nearest_content(predicted_content, batch_size)
-        loss_g = criterion_g(page_content_embeddings, predicted_content_index_reconstruction)
+        print(predicted_content_index_reconstruction)
+        print("s")
+        print(predicted_word_indices[:, 0])
+        results = predicted_content_index_reconstruction - predicted_word_indices[:, 0]
+        loss_g = criterion_g(predicted_content_index_reconstruction, predicted_word_indices[:, 0])
+        # loss_g = criterion_g(page_content_embeddings, predicted_content_index_reconstruction)
         G_optimizer.zero_grad()
         loss_g.backward()
         G_optimizer.step()
@@ -284,13 +248,13 @@ if __name__ == '__main__':
             np.mean(train_hist['per_epoch_ptimes']), epochs, total_ptime))
     print("should be 0")
     result = G_net(torch.tensor(tax()).to(device))
-    print(torch.topk(result, num_indicies)[1])
+    print(torch.topk(result, 1)[1])
     print("probs")
     print(result)
     print()
     print()
     print("should be 1")
     result = G_net(torch.tensor(passport()).to(device))
-    print(torch.topk(result, num_indicies)[1])
+    print(torch.topk(result, 1)[1])
     print("probs")
     print(result)
