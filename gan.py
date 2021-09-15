@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torchvision.utils import make_grid, save_image
 from toy_data import universal_credit, passport, tax
-
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 class Generator(nn.Module):
     """Image generator
@@ -22,16 +22,13 @@ class Generator(nn.Module):
             output_dims {int} -- Dimension of the output vector (flatten image)
         """
         super(Generator, self).__init__()
-        # Original architecture
-        # self.fc0 = nn.Sequential(nn.Linear(input_dims, 128), nn.LeakyReLU(0.2))
-        # # output hidden layer
-        # self.fc1 = nn.Sequential(nn.Linear(128, output_dims), nn.Tanh())
-        # CW2 arch
-        # # TODO: leaky relu rate?
-        self.fc0 = nn.Sequential(nn.Linear(input_dims, 256), nn.LeakyReLU(0.2))
-        self.fc1 = nn.Sequential(nn.Linear(256, 512), nn.LeakyReLU(0.2))
-        self.fc2 = nn.Sequential(nn.Linear(512, 1024), nn.LeakyReLU(0.2))
-        self.fc3 = nn.Sequential(nn.Linear(1024, output_dims), nn.Tanh())
+        self.fc0 = nn.Sequential(nn.Linear(input_dims, 1536), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc1 = nn.Sequential(nn.Linear(1536, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc2 = nn.Sequential(nn.Linear(3072, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc3 = nn.Sequential(nn.Linear(3072, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc4 = nn.Sequential(nn.Linear(3072, 3072), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc5 = nn.Sequential(nn.Linear(3072, 1536), nn.LeakyReLU(0.2), nn.Dropout(0.3))
+        self.fc6 = nn.Sequential(nn.Linear(1536, output_dims), nn.Tanh())
 
     def forward(self, x):
         """Forward function
@@ -43,14 +40,13 @@ class Generator(nn.Module):
             Tensor -- a batch of flatten image in shape (<batch_size
             To make it easier to understand, here is a small example:>x<output_dims>)
         """
-        # Original architecture
-        # x = self.fc0(x)
-        # x = self.fc1(x)
-        # CW2 arch
         x = self.fc0(x)
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
+        x = self.fc4(x)
+        x = self.fc5(x)
+        x = self.fc6(x)
         return x
 
 
@@ -73,22 +69,22 @@ class Discriminator(nn.Module):
         """
         super(Discriminator, self).__init__()
         self.fc0 = nn.Sequential(
-            nn.Linear(input_dims, 1024),
+            nn.Linear(input_dims, 1536),
             nn.LeakyReLU(0.2),
             nn.Dropout(0.3)
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(1024, 512),
+            nn.Linear(1536, 3072),
             nn.LeakyReLU(0.2),
             nn.Dropout(0.3)
         )
         self.fc2 = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(3072, 1536),
             nn.LeakyReLU(0.2),
             nn.Dropout(0.3)
         )
         self.fc3 = nn.Sequential(
-            nn.Linear(256, output_dims),
+            nn.Linear(1536, output_dims),
         )
 
     def forward(self, x):
@@ -163,6 +159,9 @@ def show_train_hist(hist, show=False, save=False, path='Train_hist.png'):
     #     plt.close()
 
 
+def corpus_embeddings():
+    return torch.row_stack((torch.tensor(tax(), requires_grad=True), torch.tensor(passport(), requires_grad=True))).to(device)
+
 def create_noise(num, dim):
     tax_noise = torch.clone(torch.tensor(tax()).repeat(int(num / 2), 1))
     passport_noise = torch.clone(torch.tensor(passport()).repeat(int(num / 2), 1))
@@ -171,21 +170,28 @@ def create_noise(num, dim):
     return concatenated[torch.randperm(concatenated.size()[0])]
 
 def generator_word_embeddings(indices):
-    corpus_values = torch.row_stack((torch.tensor(tax()), torch.tensor(passport())))
-    return corpus_values[indices]
+    return corpus_embeddings()[indices]
+    # corpus_values = torch.row_stack((torch.tensor(tax()), torch.tensor(passport())))
+    # return corpus_values[indices]
 
+
+def nearest_content(bert_reconstructions, batch_size):
+    dist = torch.cdist(bert_reconstructions, corpus_embeddings())
+    closest_indices = torch.topk(dist, 1, largest=False).indices[:, 0][:,0]
+    embeddings = corpus_embeddings()
+    reshaped_embeddings = torch.reshape(embeddings, (1, embeddings.shape[0], embeddings.shape[1]))
+    resized_reshaped_embeddings = reshaped_embeddings.repeat(batch_size, 1, 1)
+    content = resized_reshaped_embeddings[:, closest_indices, :][0, :, :]
+    return content
 
 if __name__ == '__main__':
     # initialise the device for training, if gpu is available, device = 'cuda', else: device = 'cpu'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # training parameters
-    batch_size = 100
-    learning_rate = 0.0002
-    # Changing this to 0.01 results in much worse generator losses, ~12 after a few epochs
-    # While the lower LR has a loss of ~2 after just a couple of epochs
-    # The higher LR fails to converge
-    # learning_rate = 0.01
+    batch_size = 500
+    g_learning_rate = 0.01
+    d_learning_rate = 0.001
     epochs = 1000
 
     # parameters for Models
@@ -205,8 +211,11 @@ if __name__ == '__main__':
     criterion_d = nn.MSELoss().to(device)
     criterion_g = nn.MSELoss().to(device)
     # Initialise the Optimizer
-    G_optimizer = torch.optim.Adam(G_net.parameters(), lr=learning_rate)
-    D_optimizer = torch.optim.Adam(D_net.parameters(), lr=learning_rate)
+    G_optimizer = torch.optim.Adam(G_net.parameters(), lr=g_learning_rate)
+    D_optimizer = torch.optim.Adam(D_net.parameters(), lr=d_learning_rate)
+
+    G_scheduler = ReduceLROnPlateau(G_optimizer, 'max', patience=5, factor=0.7)
+    D_scheduler = ReduceLROnPlateau(D_optimizer, 'max', patience=5, factor=0.99)
 
     # tracking variables
     train_hist = {}
@@ -216,7 +225,8 @@ if __name__ == '__main__':
     train_hist['total_ptime'] = []
 
     print("About to start training, learning parameters:")
-    print(f"Learning rate: {learning_rate}")
+    print(f"G Learning rate: {g_learning_rate}")
+    print(f"D Learning rate: {d_learning_rate}")
     print(f"Batch size: {batch_size}")
     torch.autograd.set_detect_anomaly(True)
     start_time = time.time()
@@ -238,12 +248,17 @@ if __name__ == '__main__':
         D_optimizer.zero_grad()
         loss_d.backward()
         D_optimizer.step()
-        # TODO: This should find the nearest piece of content for each prediction
-        predicted_content_index_reconstruction = torch.tensor(1).repeat(batch_size, 1).float().to(device)
-        loss_g = criterion_g(word_predictions, predicted_content_index_reconstruction)
+        predicted_content_index_reconstruction = nearest_content(predicted_content, batch_size)
+        loss_g = criterion_g(page_content_embeddings, predicted_content_index_reconstruction)
         G_optimizer.zero_grad()
         loss_g.backward()
         G_optimizer.step()
+
+        G_scheduler.step(loss_g)
+        D_scheduler.step(loss_d)
+
+        print(f"G learning_rate: {G_scheduler.state_dict()['_last_lr']}")
+        print(f"D learning_rate: {D_scheduler.state_dict()['_last_lr']}")
 
         ## store the loss of each iter
         Loss_D.append(loss_d.item())
@@ -267,10 +282,15 @@ if __name__ == '__main__':
 
         print('Avg per epoch ptime: %.2f, total %d epochs ptime: %.2f' % (
             np.mean(train_hist['per_epoch_ptimes']), epochs, total_ptime))
-        print("Training finish!... save training results")
     print("should be 0")
     result = G_net(torch.tensor(tax()).to(device))
     print(torch.topk(result, num_indicies)[1])
+    print("probs")
+    print(result)
+    print()
+    print()
     print("should be 1")
     result = G_net(torch.tensor(passport()).to(device))
     print(torch.topk(result, num_indicies)[1])
+    print("probs")
+    print(result)
